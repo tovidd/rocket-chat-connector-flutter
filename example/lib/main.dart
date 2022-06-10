@@ -1,29 +1,22 @@
 import 'dart:convert';
-
-import 'package:flutter/foundation.dart';
+import 'package:example/config.dart';
 import 'package:flutter/material.dart';
 import 'package:rocket_chat_connector_flutter/models/authentication.dart';
 import 'package:rocket_chat_connector_flutter/models/channel.dart';
 import 'package:rocket_chat_connector_flutter/models/room.dart';
 import 'package:rocket_chat_connector_flutter/models/user.dart';
 import 'package:rocket_chat_connector_flutter/services/authentication_service.dart';
-import 'package:rocket_chat_connector_flutter/services/http_service.dart'
-    as rocket_http_service;
-import 'package:rocket_chat_connector_flutter/web_socket/notification.dart'
-    as rocket_notification;
+import 'package:rocket_chat_connector_flutter/services/http_service.dart' as rocket_http_service;
+import 'package:rocket_chat_connector_flutter/web_socket/notification.dart' as rocket_notification;
 import 'package:rocket_chat_connector_flutter/web_socket/web_socket_service.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:http/http.dart' as http;
 
 void main() => runApp(MyApp());
 
-final String serverUrl = "myServerUrl";
-final String webSocketUrl = "myWebSocketUrl";
-final String username = "myUserName";
-final String password = "myPassword";
-final Channel channel = Channel(id: "myChannelId");
-final Room room = Room(id: "myRoomId");
-final rocket_http_service.HttpService rocketHttpService =
-    rocket_http_service.HttpService(Uri.parse(serverUrl));
+final Channel channel = Channel(id: Config.channelId);
+final Room room = Room(id: Config.roomId);
+final rocket_http_service.HttpService rocketHttpService = rocket_http_service.HttpService(Uri.parse(Config.serverUrl));
 
 class MyApp extends StatelessWidget {
   @override
@@ -60,9 +53,10 @@ class _MyHomePageState extends State<MyHomePage> {
         future: getAuthentication(),
         builder: (context, AsyncSnapshot<Authentication> snapshot) {
           if (snapshot.hasData) {
+            Config.xAuthToken = snapshot.data?.data?.authToken;
+            Config.xUserId = snapshot.data?.data?.userId;
             user = snapshot.data.data.me;
-            webSocketChannel = webSocketService.connectToWebSocket(
-                webSocketUrl, snapshot.data);
+            webSocketChannel = webSocketService.connectToWebSocket(Config.webSocketUrl, snapshot.data);
             webSocketService.streamNotifyUserSubscribe(webSocketChannel, user);
             return _getScaffold();
           } else {
@@ -91,17 +85,13 @@ class _MyHomePageState extends State<MyHomePage> {
               stream: webSocketChannel.stream,
               builder: (context, snapshot) {
                 print(snapshot.data);
-                rocket_notification.Notification notification = snapshot.hasData
-                    ? rocket_notification.Notification.fromMap(
-                        jsonDecode(snapshot.data))
-                    : null;
+                rocket_notification.Notification notification =
+                    snapshot.hasData ? rocket_notification.Notification.fromMap(jsonDecode(snapshot.data)) : null;
                 print(notification);
-                webSocketService.streamNotifyUserSubscribe(
-                    webSocketChannel, user);
+                webSocketService.streamNotifyUserSubscribe(webSocketChannel, user);
                 return Padding(
                   padding: const EdgeInsets.symmetric(vertical: 24.0),
-                  child: Text(
-                      notification != null ? '${notification.toString()}' : ''),
+                  child: Text(notification != null ? '${notification.toString()}' : ''),
                 );
               },
             )
@@ -116,12 +106,30 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 
-  void _sendMessage() {
+  void _sendMessage() async {
     if (_controller.text.isNotEmpty) {
-      webSocketService.sendMessageOnChannel(
-          _controller.text, webSocketChannel, channel);
-      webSocketService.sendMessageOnRoom(
-          _controller.text, webSocketChannel, room);
+      webSocketService.sendMessageOnChannel(_controller.text, webSocketChannel, channel);
+      // webSocketService.sendMessageOnRoom(_controller.text, webSocketChannel, room);
+      await http
+          .post(
+        Uri.parse('http://127.0.0.1:3000/api/v1/chat.sendMessage'),
+        headers: <String, String>{
+          'Content-Type': 'application/json',
+          'X-Auth-Token': Config.xAuthToken,
+          'X-User-Id': Config.xUserId,
+        },
+        body: jsonEncode(<String, dynamic>{
+          'message': {
+            'rid': Config.roomId,
+            'msg': _controller.text,
+          },
+        }),
+      )
+          .then((value) {
+        print(value.statusCode);
+        print(value.reasonPhrase);
+        print(value.body);
+      });
     }
   }
 
@@ -132,8 +140,7 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   Future<Authentication> getAuthentication() async {
-    final AuthenticationService authenticationService =
-        AuthenticationService(rocketHttpService);
-    return await authenticationService.login(username, password);
+    final AuthenticationService authenticationService = AuthenticationService(rocketHttpService);
+    return await authenticationService.login(Config.username, Config.password);
   }
 }
